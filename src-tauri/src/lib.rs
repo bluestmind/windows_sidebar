@@ -1,8 +1,10 @@
 mod appbar;
 mod config;
+mod google_oauth;
 mod shell_utils;
 
 use config::{AppConfig, AppItem};
+use google_oauth::{GoogleUserProfile, OAuthConfigStatus};
 use tauri::Manager;
 use std::path::Path;
 
@@ -145,6 +147,26 @@ fn dock_window(app: tauri::AppHandle, edge: String, width: u32, is_appbar: bool)
 }
 
 #[tauri::command]
+fn get_google_oauth_config() -> OAuthConfigStatus {
+    google_oauth::get_oauth_status()
+}
+
+#[tauri::command]
+fn save_google_oauth_config(
+    client_id: String,
+    client_secret: Option<String>,
+) -> Result<OAuthConfigStatus, String> {
+    google_oauth::save_oauth_config(client_id, client_secret)
+}
+
+#[tauri::command]
+async fn google_oauth_login(app: tauri::AppHandle) -> Result<GoogleUserProfile, String> {
+    tauri::async_runtime::spawn_blocking(move || google_oauth::perform_google_oauth_login(&app))
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
+}
+
+#[tauri::command]
 fn close_sidebar(app: tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         if let Ok(hwnd) = window.hwnd() {
@@ -171,7 +193,10 @@ pub fn run() {
             launch_app,
             open_in_folder,
             dock_window,
-            close_sidebar
+            close_sidebar,
+            get_google_oauth_config,
+            save_google_oauth_config,
+            google_oauth_login
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

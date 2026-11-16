@@ -23,6 +23,7 @@ import {
 import MusicPlayer from "./components/MusicPlayer";
 import LiveMarketCard from "./components/LiveMarketCard";
 import AccountQuotaWidget from "./components/AccountQuotaWidget";
+import NotesWidget from "./components/NotesWidget";
 import ITToolsViewer from "./components/ITToolsViewer";
 
 interface AppItem {
@@ -496,6 +497,9 @@ export default function App() {
 
           {/* Standalone Account Cooldown & Token Reset Tracker */}
           <AccountQuotaWidget onNotify={showToast} />
+
+          {/* Quick Notes Widget */}
+          <NotesWidget onNotify={showToast} />
 
           {/* Groups Scroll Container */}
           <main className="flex-1 overflow-y-auto px-2.5 pb-3 space-y-2.5">

@@ -76,8 +76,31 @@ export interface ModelQuotaInfo {
 export interface GoogleAccountQuota {
   id: string;
   email: string;
+  name?: string | null;
+  avatar_url?: string | null;
   subscription_tier: 'PRO' | 'ULTRA' | 'FREE';
   is_active: boolean;
   models: ModelQuotaInfo[];
   last_updated: number;
+}
+
+export interface OAuthConfigStatus {
+  has_client_id: boolean;
+  client_id_preview: string;
+  has_client_secret: boolean;
+}
+
+export interface GoogleUserProfile {
+  id: string;
+  email: string;
+  name: string | null;
+  avatar_url: string | null;
+}
+
+export interface SidebarNote {
+  id: string;
+  title: string;
+  content: string;
+  color: 'amber' | 'blue' | 'emerald' | 'purple' | 'rose';
+  updatedAt: number;
 }
