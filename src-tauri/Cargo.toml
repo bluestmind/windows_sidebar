@@ -1,0 +1,45 @@
+[package]
+name = "windows-app-group-sidebar"
+version = "0.1.0"
+description = "High-Performance Windows Application Group Sidebar"
+authors = ["Antigravity"]
+edition = "2024"
+
+[lib]
+name = "windows_app_group_sidebar_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rfd = "0.18"
+image = { version = "0.25", default-features = false, features = ["png"] }
+base64 = "0.23"
+window-vibrancy = "0.8.1"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_Graphics_Dwm",
+    "Win32_System_Ole",
+    "Win32_System_Threading",
+    "Win32_Security",
+] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

@@ -1,0 +1,130 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  background: transparent !important;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  color: #f3f4f6;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Super clean macOS thin scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 9999px;
+  transition: background 0.15s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.4);
+}
+
+/* Authentic macOS Frosted Glass Surface (Zero Flicker, No Clipping Shadow) */
+.macos-glass-panel {
+  background: rgba(20, 22, 32, 0.70);
+  border-left: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 1px 0 0 rgba(255, 255, 255, 0.10);
+}
+
+/* Inner Glass Card for Groups */
+.macos-group-card {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.macos-group-card:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+/* macOS Item Row (No layout transforms, purely opacity/color for zero flicker) */
+.macos-item-row {
+  transition: background-color 0.12s ease;
+  border-radius: 8px;
+}
+
+.macos-item-row:hover {
+  background-color: rgba(255, 255, 255, 0.12);
+}
+
+.macos-item-row:active {
+  background-color: rgba(255, 255, 255, 0.18);
+}
+
+/* macOS Traffic Light Buttons */
+.traffic-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.15s ease;
+  position: relative;
+  cursor: pointer;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.3), 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.traffic-dot svg {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.traffic-container:hover .traffic-dot svg {
+  opacity: 0.75;
+}
+
+.traffic-close {
+  background-color: #ff5f57;
+  border: 0.5px solid rgba(224, 68, 62, 0.8);
+}
+.traffic-close:hover {
+  background-color: #ff3b30;
+}
+
+.traffic-minimize {
+  background-color: #febc2e;
+  border: 0.5px solid rgba(222, 161, 35, 0.8);
+}
+.traffic-minimize:hover {
+  background-color: #f59e0b;
+}
+
+.traffic-expand {
+  background-color: #28c840;
+  border: 0.5px solid rgba(26, 171, 41, 0.8);
+}
+.traffic-expand:hover {
+  background-color: #10b981;
+}
+
+/* macOS Context Menu Glass */
+.macos-menu-glass {
+  background: rgba(26, 28, 38, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 
+    0 16px 36px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
