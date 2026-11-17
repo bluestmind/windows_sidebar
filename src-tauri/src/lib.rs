@@ -1,8 +1,10 @@
+mod agy_usage;
 mod appbar;
 mod config;
 mod google_oauth;
 mod shell_utils;
 
+use agy_usage::AgyUsageReport;
 use config::{AppConfig, AppItem};
 use google_oauth::{GoogleUserProfile, OAuthConfigStatus};
 use tauri::Manager;
@@ -183,6 +185,13 @@ async fn google_oauth_login(app: tauri::AppHandle) -> Result<GoogleUserProfile, 
 }
 
 #[tauri::command]
+async fn get_agy_usage() -> Result<AgyUsageReport, String> {
+    tauri::async_runtime::spawn_blocking(agy_usage::fetch_agy_usage)
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
+}
+
+#[tauri::command]
 fn close_sidebar(app: tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         if let Ok(hwnd) = window.hwnd() {
@@ -212,7 +221,8 @@ pub fn run() {
             close_sidebar,
             get_google_oauth_config,
             save_google_oauth_config,
-            google_oauth_login
+            google_oauth_login,
+            get_agy_usage
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

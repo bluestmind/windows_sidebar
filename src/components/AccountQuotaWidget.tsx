@@ -24,6 +24,7 @@ import type {
   ModelQuotaInfo,
   OAuthConfigStatus,
 } from "../types";
+import LiveAgyUsage from "./LiveAgyUsage";
 
 const MANUAL_STORAGE_KEY = "sidebar_manual_account_quotas_v1";
 
@@ -33,15 +34,6 @@ const PRESET_MODELS = [
   "Claude Sonnet",
   "Gemini Image",
 ];
-
-function buildDefaultModels(): ModelQuotaInfo[] {
-  return PRESET_MODELS.map((name) => ({
-    id: name.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
-    display_name: name,
-    percentage: 100,
-    reset_time: null,
-  }));
-}
 
 function loadAccounts(): GoogleAccountQuota[] {
   try {
@@ -296,7 +288,7 @@ export default function AccountQuotaWidget({ onNotify }: AccountQuotaWidgetProps
           avatar_url: profile.avatar_url,
           subscription_tier: "PRO",
           is_active: accounts.length === 0,
-          models: buildDefaultModels(),
+          models: [],
           last_updated: Date.now(),
         };
         next = [...accounts, created];
@@ -572,7 +564,9 @@ export default function AccountQuotaWidget({ onNotify }: AccountQuotaWidgetProps
 
         {/* Collapsible Body */}
         {!isCollapsed && (
-          <div className="p-1.5 space-y-1.5 max-h-[250px] overflow-y-auto">
+          <div className="p-1.5 space-y-1.5 max-h-[340px] overflow-y-auto">
+            {/* Real quota for the account signed into the official agy CLI */}
+            <LiveAgyUsage onNotify={onNotify} />
             {/* Google OAuth Desktop Client Setup */}
             {showOAuthSetup && (
               <form
@@ -924,7 +918,7 @@ export default function AccountQuotaWidget({ onNotify }: AccountQuotaWidgetProps
             {accounts.length === 0 && !showAddForm && !showOAuthSetup && (
               <div className="p-2 rounded-lg bg-black/25 border border-white/[0.06] text-center space-y-1.5">
                 <p className="text-[9.5px] text-white/50 leading-snug">
-                  Sign in with Google or add an account manually to check model usage & cooldowns.
+                  Other accounts: sign in with Google or add one manually to log cooldowns.
                 </p>
                 <div className="flex items-center justify-center space-x-1.5">
                   <button

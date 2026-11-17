@@ -97,6 +97,27 @@ export interface GoogleUserProfile {
   avatar_url: string | null;
 }
 
+export interface AgyUsageBucket {
+  id: string;
+  name: string;
+  window: string;
+  description: string;
+  remaining_percent: number;
+  reset_time: string | null;
+}
+
+export interface AgyUsageGroup {
+  name: string;
+  description: string;
+  buckets: AgyUsageBucket[];
+}
+
+export interface AgyUsageReport {
+  groups: AgyUsageGroup[];
+  summary: string;
+  fetched_at_ms: number;
+}
+
 export interface SidebarNote {
   id: string;
   title: string;
