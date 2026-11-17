@@ -97,7 +97,7 @@ pub fn get_default_config() -> AppConfig {
             dock_edge: "right".to_string(),
             width: 260,
             is_appbar: false,
-            always_on_top: true,
+            always_on_top: false,
             auto_hide: false,
         },
         groups: vec![

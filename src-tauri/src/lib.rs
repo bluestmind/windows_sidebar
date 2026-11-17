@@ -49,9 +49,9 @@ pub fn apply_docking(window: &tauri::WebviewWindow, edge: &str, width: u32, is_a
         x: phys_x,
         y: phys_y,
     }));
-    let _ = window.set_always_on_top(true);
+    let _ = window.set_always_on_top(false);
+    let _ = window.set_always_on_bottom(true);
     let _ = window.show();
-    let _ = window.set_focus();
 
     // 2. Apply authentic macOS Vibrancy / Windows Blur (Flicker-Free)
     #[cfg(target_os = "windows")]
@@ -61,6 +61,22 @@ pub fn apply_docking(window: &tauri::WebviewWindow, edge: &str, width: u32, is_a
     }
 
     if let Ok(hwnd) = window.hwnd() {
+        #[cfg(target_os = "windows")]
+        unsafe {
+            use windows::Win32::Foundation::HWND;
+            use windows::Win32::UI::WindowsAndMessaging::{
+                SetWindowPos, HWND_BOTTOM, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+            };
+            let _ = SetWindowPos(
+                HWND(hwnd.0 as *mut _),
+                Some(HWND_BOTTOM),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
+        }
         if is_appbar {
             appbar::register_appbar(hwnd.0 as isize, edge, phys_width as i32, phys_height as i32);
         } else {

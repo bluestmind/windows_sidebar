@@ -20,7 +20,7 @@
         "maxWidth": 700,
         "decorations": false,
         "transparent": true,
-        "alwaysOnTop": true,
+        "alwaysOnTop": false,
         "resizable": true,
         "visible": true,
         "shadow": false
