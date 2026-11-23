@@ -9,24 +9,21 @@ import {
   Plus,
   Trash2,
   CheckCircle2,
-  RotateCcw,
   KeyRound,
   LogIn,
-  Copy,
   SlidersHorizontal,
   ExternalLink,
   X,
   Loader2,
+  RefreshCw,
+  Sparkles,
 } from "lucide-react";
 import type {
-  GoogleAccountQuota,
-  GoogleUserProfile,
+  ManagedAccount,
   ModelQuotaInfo,
   OAuthConfigStatus,
+  GoogleUserProfile,
 } from "../types";
-import LiveAgyUsage from "./LiveAgyUsage";
-
-const MANUAL_STORAGE_KEY = "sidebar_manual_account_quotas_v1";
 
 const PRESET_MODELS = [
   "Gemini Pro High",
@@ -35,45 +32,8 @@ const PRESET_MODELS = [
   "Gemini Image",
 ];
 
-function loadAccounts(): GoogleAccountQuota[] {
-  try {
-    const raw = localStorage.getItem(MANUAL_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.map((acc) => ({
-      id: acc.id || `acc-${Date.now()}`,
-      email: acc.email || "account@gmail.com",
-      name: acc.name ?? null,
-      avatar_url: acc.avatar_url ?? null,
-      subscription_tier:
-        acc.subscription_tier === "ULTRA" || acc.subscription_tier === "FREE"
-          ? acc.subscription_tier
-          : "PRO",
-      is_active: Boolean(acc.is_active),
-      models: Array.isArray(acc.models)
-        ? acc.models.map((m: Partial<ModelQuotaInfo> & { name?: string }) => ({
-            id: m.id || m.name || `model-${Math.random()}`,
-            display_name: m.display_name || m.name || "Model",
-            percentage: typeof m.percentage === "number" ? m.percentage : 100,
-            reset_time: m.reset_time ?? null,
-          }))
-        : [],
-      last_updated: typeof acc.last_updated === "number" ? acc.last_updated : Date.now(),
-    }));
-  } catch {
-    return [];
-  }
-}
-
-function saveAccounts(list: GoogleAccountQuota[]) {
-  try {
-    localStorage.setItem(MANUAL_STORAGE_KEY, JSON.stringify(list));
-  } catch {}
-}
-
 function formatResetCountdown(
-  resetTime: string | null,
+  resetTime: string | null | undefined,
   percentage: number,
   nowMs: number
 ): {
@@ -86,18 +46,23 @@ function formatResetCountdown(
     if (percentage >= 99.5) {
       return { text: "Full", exactTime: null, isUrgent: false, isReady: true };
     }
-    return { text: "No timer", exactTime: null, isUrgent: false, isReady: false };
+    return { text: "Ready", exactTime: null, isUrgent: false, isReady: true };
   }
 
   const targetMs = Date.parse(resetTime);
   if (isNaN(targetMs)) {
-    return { text: "No timer", exactTime: null, isUrgent: false, isReady: false };
+    return { text: "-", exactTime: null, isUrgent: false, isReady: false };
   }
 
-  const exactTime = new Date(targetMs).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  const d = new Date(targetMs);
+  const sameDay = d.toDateString() === new Date(nowMs).toDateString();
+  const exactTime = sameDay
+    ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleString([], {
+        weekday: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
 
   const diffMs = targetMs - nowMs;
   if (diffMs <= 0) {
@@ -113,23 +78,20 @@ function formatResetCountdown(
   const days = Math.floor(totalSecs / 86400);
   const hours = Math.floor((totalSecs % 86400) / 3600);
   const mins = Math.floor((totalSecs % 3600) / 60);
-  const secs = totalSecs % 60;
 
   let text = "";
   if (days > 0) {
     text = `${days}d ${hours}h`;
   } else if (hours > 0) {
     text = `${hours}h ${mins}m`;
-  } else if (mins > 0) {
-    text = `${mins}m ${secs < 10 ? "0" : ""}${secs}s`;
   } else {
-    text = `${secs}s`;
+    text = `${Math.max(1, mins)}m`;
   }
 
   return {
     text,
     exactTime,
-    isUrgent: percentage <= 15,
+    isUrgent: percentage <= 20,
     isReady: false,
   };
 }
@@ -156,16 +118,25 @@ function getTextColor(pct: number): string {
   return "text-rose-400";
 }
 
+function windowLabel(window: string, name: string): string {
+  if (window === "5h") return "5h limit";
+  if (window === "weekly") return "Weekly";
+  return name;
+}
+
 interface AccountQuotaWidgetProps {
   onNotify?: (msg: string) => void;
 }
 
 export default function AccountQuotaWidget({ onNotify }: AccountQuotaWidgetProps) {
-  const [accounts, setAccounts] = useState<GoogleAccountQuota[]>(() => loadAccounts());
+  const [accounts, setAccounts] = useState<ManagedAccount[]>([]);
   const [isCollapsed, setIsCollapsed] = useState<boolean>(() => {
     return localStorage.getItem("sidebar_quota_collapsed") === "true";
   });
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [isSyncingAll, setIsSyncingAll] = useState(false);
+  const [syncingIds, setSyncingIds] = useState<Set<string>>(new Set());
+
   const [showAddForm, setShowAddForm] = useState(false);
   const [showOAuthSetup, setShowOAuthSetup] = useState(false);
   const [checkingAccountId, setCheckingAccountId] = useState<string | null>(null);
@@ -185,8 +156,14 @@ export default function AccountQuotaWidget({ onNotify }: AccountQuotaWidgetProps
   const [resetHours, setResetHours] = useState("5");
   const [resetMins, setResetMins] = useState("0");
 
-  // Modal custom model state
-  const [modalNewModel, setModalNewModel] = useState("");
+  const refreshAccounts = useCallback(async () => {
+    try {
+      const list = await invoke<ManagedAccount[]>("get_managed_accounts");
+      setAccounts(list);
+    } catch (err) {
+      console.error("Failed loading managed accounts:", err);
+    }
+  }, []);
 
   const refreshOAuthStatus = useCallback(async () => {
     try {
@@ -196,59 +173,87 @@ export default function AccountQuotaWidget({ onNotify }: AccountQuotaWidgetProps
   }, []);
 
   useEffect(() => {
+    refreshAccounts();
     refreshOAuthStatus();
-  }, [refreshOAuthStatus]);
+  }, [refreshAccounts, refreshOAuthStatus]);
 
-  // 1-second live countdown ticker + auto-restore when cooldown expires
+  // Periodic auto-refresh every 5 minutes
+  useEffect(() => {
+    const timer = setInterval(() => {
+      refreshAccounts();
+    }, 5 * 60 * 1000);
+    return () => clearInterval(timer);
+  }, [refreshAccounts]);
+
+  // 1-second live countdown ticker
   useEffect(() => {
     const ticker = setInterval(() => {
-      const now = Date.now();
-      setNowMs(now);
-
-      setAccounts((prev) => {
-        let changed = false;
-        const restoredNames: string[] = [];
-
-        const next = prev.map((acc) => {
-          let accChanged = false;
-          const updatedModels = acc.models.map((m) => {
-            if (m.reset_time) {
-              const target = Date.parse(m.reset_time);
-              if (!isNaN(target) && target <= now) {
-                changed = true;
-                accChanged = true;
-                restoredNames.push(`${m.display_name} (${acc.email})`);
-                return { ...m, percentage: 100, reset_time: null };
-              }
-            }
-            return m;
-          });
-          return accChanged ? { ...acc, models: updatedModels, last_updated: now } : acc;
-        });
-
-        if (changed) {
-          saveAccounts(next);
-          if (restoredNames.length > 0) {
-            onNotify?.(`Tokens back: ${restoredNames[0]}`);
-          }
-          return next;
-        }
-        return prev;
-      });
+      setNowMs(Date.now());
     }, 1000);
-
     return () => clearInterval(ticker);
-  }, [onNotify]);
-
-  const persist = (next: GoogleAccountQuota[]) => {
-    setAccounts(next);
-    saveAccounts(next);
-  };
+  }, []);
 
   const toggleCollapse = () => {
     const next = !isCollapsed;
     setIsCollapsed(next);
     localStorage.setItem("sidebar_quota_collapsed", String(next));
+  };
+
+  const handleSyncAll = async () => {
+    setIsSyncingAll(true);
+    try {
+      const updated = await invoke<ManagedAccount[]>("refresh_all_accounts_quota");
+      setAccounts(updated);
+      onNotify?.("All account quotas synchronized");
+    } catch (err) {
+      onNotify?.(`Sync failed: ${err}`);
+    } finally {
+      setIsSyncingAll(false);
+    }
+  };
+
+  const handleRefreshSingle = async (accountId: string) => {
+    setSyncingIds((prev) => new Set(prev).add(accountId));
+    try {
+      const updatedAcc = await invoke<ManagedAccount>("refresh_account_quota", {
+        accountId,
+      });
+      setAccounts((prev) =>
+        prev.map((a) => (a.id === accountId ? updatedAcc : a))
+      );
+      onNotify?.(`Quotas updated for ${updatedAcc.email}`);
+    } catch (err) {
+      onNotify?.(`Quota refresh failed: ${err}`);
+    } finally {
+      setSyncingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(accountId);
+        return next;
+      });
+    }
+  };
+
+  const handleSwitchActive = async (accountId: string) => {
+    try {
+      const next = await invoke<ManagedAccount[]>("switch_active_account", {
+        accountId,
+      });
+      setAccounts(next);
+      const active = next.find((a) => a.id === accountId);
+      onNotify?.(`Active Antigravity account switched to ${active?.email || accountId}`);
+    } catch (err) {
+      onNotify?.(`Switch account failed: ${err}`);
+    }
+  };
+
+  const handleImportAntigravity = async () => {
+    try {
+      const imported = await invoke<ManagedAccount>("import_active_antigravity_account");
+      await refreshAccounts();
+      onNotify?.(`Imported active account: ${imported.email}`);
+    } catch (err) {
+      onNotify?.(`Import failed: ${err}`);
+    }
   };
 
   const handleGoogleSignIn = async () => {
@@ -262,43 +267,11 @@ export default function AccountQuotaWidget({ onNotify }: AccountQuotaWidgetProps
     setIsSigningIn(true);
     try {
       const profile = await invoke<GoogleUserProfile>("google_oauth_login");
-      const existingIdx = accounts.findIndex(
-        (a) => a.email.toLowerCase() === profile.email.toLowerCase()
-      );
-
-      let next: GoogleAccountQuota[];
-      let openedId = profile.id;
-      if (existingIdx >= 0) {
-        openedId = accounts[existingIdx].id;
-        next = accounts.map((acc, idx) =>
-          idx === existingIdx
-            ? {
-                ...acc,
-                name: profile.name || acc.name,
-                avatar_url: profile.avatar_url || acc.avatar_url,
-                last_updated: Date.now(),
-              }
-            : acc
-        );
-      } else {
-        const created: GoogleAccountQuota = {
-          id: profile.id,
-          email: profile.email,
-          name: profile.name,
-          avatar_url: profile.avatar_url,
-          subscription_tier: "PRO",
-          is_active: accounts.length === 0,
-          models: [],
-          last_updated: Date.now(),
-        };
-        next = [...accounts, created];
-      }
-
-      persist(next);
-      setCheckingAccountId(openedId);
-      onNotify?.(`Signed in: ${profile.email}`);
+      await refreshAccounts();
+      setCheckingAccountId(profile.id);
+      onNotify?.(`Connected Google account: ${profile.email}`);
     } catch (err) {
-      onNotify?.(`${err}`);
+      onNotify?.(`Google sign-in error: ${err}`);
     } finally {
       setIsSigningIn(false);
     }
@@ -309,210 +282,137 @@ export default function AccountQuotaWidget({ onNotify }: AccountQuotaWidgetProps
     try {
       const status = await invoke<OAuthConfigStatus>("save_google_oauth_config", {
         clientId: clientIdInput,
-        clientSecret: clientSecretInput.trim() || null,
+        clientSecret: clientSecretInput.trim() ? clientSecretInput.trim() : null,
       });
       setOauthStatus(status);
+      setShowOAuthSetup(false);
       setClientIdInput("");
       setClientSecretInput("");
-      setShowOAuthSetup(false);
-      onNotify?.("Google OAuth Client saved");
+      onNotify?.("Google OAuth client saved");
     } catch (err) {
-      onNotify?.(`${err}`);
+      onNotify?.(`Error saving OAuth config: ${err}`);
     }
   };
 
-  const applyCooldownPreset = (hours: number) => {
-    setResetHours(String(hours));
-    setResetMins("0");
-    setPercentInput(0);
+  const handleDeleteAccount = async (accountId: string) => {
+    try {
+      const next = await invoke<ManagedAccount[]>("delete_managed_account", {
+        accountId,
+      });
+      setAccounts(next);
+      if (checkingAccountId === accountId) setCheckingAccountId(null);
+      onNotify?.("Account removed");
+    } catch (err) {
+      onNotify?.(`Delete failed: ${err}`);
+    }
   };
 
-  const handleSaveTracker = (e: React.FormEvent) => {
+  const handleSaveManualAccount = async (e: React.FormEvent) => {
     e.preventDefault();
-    const email = emailInput.trim();
-    if (!email) return;
+    const cleanEmail = emailInput.trim();
+    if (!cleanEmail) return;
 
-    const modelName =
-      modelPreset === "__custom__" ? customModel.trim() || "Custom Model" : modelPreset;
-    const hrs = Math.max(0, parseFloat(resetHours) || 0);
-    const mins = Math.max(0, parseFloat(resetMins) || 0);
-    const totalMs = (hrs * 3600 + mins * 60) * 1000;
-    const resetTime = totalMs > 0 ? new Date(Date.now() + totalMs).toISOString() : null;
+    const chosenModelName =
+      modelPreset === "__custom__" ? customModel.trim() : modelPreset;
+    if (!chosenModelName) return;
 
-    const entry: ModelQuotaInfo = {
-      id: modelName.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
-      display_name: modelName,
-      percentage: Math.min(100, Math.max(0, percentInput)),
-      reset_time: resetTime,
+    let reset_time: string | null = null;
+    const hrs = parseFloat(resetHours) || 0;
+    const mins = parseFloat(resetMins) || 0;
+    const totalMs = (hrs * 60 + mins) * 60 * 1000;
+    if (totalMs > 0 && percentInput < 100) {
+      reset_time = new Date(Date.now() + totalMs).toISOString();
+    }
+
+    const newModel: ModelQuotaInfo = {
+      id: chosenModelName.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+      display_name: chosenModelName,
+      percentage: Math.max(0, Math.min(100, percentInput)),
+      reset_time,
     };
 
-    const existingIdx = accounts.findIndex(
-      (a) => a.email.toLowerCase() === email.toLowerCase()
-    );
+    const newAcc: ManagedAccount = {
+      id: `manual-${Date.now()}`,
+      email: cleanEmail,
+      name: null,
+      avatar_url: null,
+      subscription_tier: tierInput,
+      is_active: accounts.length === 0,
+      access_token: null,
+      refresh_token: null,
+      raw_cred_json: null,
+      report: null,
+      manual_models: [newModel],
+      last_synced_ms: Date.now(),
+    };
 
-    let next: GoogleAccountQuota[];
-    if (existingIdx >= 0) {
-      next = accounts.map((acc, idx) => {
-        if (idx !== existingIdx) return acc;
-        const filtered = acc.models.filter(
-          (m) => m.display_name.toLowerCase() !== entry.display_name.toLowerCase()
-        );
-        return {
-          ...acc,
-          subscription_tier: tierInput,
-          models: [...filtered, entry],
-          last_updated: Date.now(),
-        };
-      });
-    } else {
-      const created: GoogleAccountQuota = {
-        id: `acc-${Date.now()}`,
-        email,
-        subscription_tier: tierInput,
-        is_active: accounts.length === 0,
-        models: [entry],
-        last_updated: Date.now(),
-      };
-      next = [...accounts, created];
-    }
-
-    persist(next);
-    setEmailInput("");
-    setCustomModel("");
-    setShowAddForm(false);
-    onNotify?.(`Saved timer for ${email}`);
-  };
-
-  const handleSetActive = (accountId: string) => {
-    const next = accounts.map((a) => ({
-      ...a,
-      is_active: a.id === accountId,
-    }));
-    persist(next);
-  };
-
-  const handleUpdateAccountTier = (
-    accountId: string,
-    tier: "PRO" | "ULTRA" | "FREE"
-  ) => {
-    const next = accounts.map((a) =>
-      a.id === accountId ? { ...a, subscription_tier: tier } : a
-    );
-    persist(next);
-  };
-
-  const handleUpdateModel = (
-    accountId: string,
-    modelId: string,
-    patch: Partial<ModelQuotaInfo>
-  ) => {
-    const next = accounts.map((acc) => {
-      if (acc.id !== accountId) return acc;
-      return {
-        ...acc,
-        last_updated: Date.now(),
-        models: acc.models.map((m) => (m.id === modelId ? { ...m, ...patch } : m)),
-      };
-    });
-    persist(next);
-  };
-
-  const handleSetCooldownHours = (
-    accountId: string,
-    modelId: string,
-    hours: number
-  ) => {
-    const resetAt = new Date(Date.now() + hours * 3600 * 1000).toISOString();
-    handleUpdateModel(accountId, modelId, { percentage: 0, reset_time: resetAt });
-  };
-
-  const handleQuickReset = (accountId: string, modelId: string) => {
-    handleUpdateModel(accountId, modelId, { percentage: 100, reset_time: null });
-  };
-
-  const handleAddModelInModal = (accountId: string, e: React.FormEvent) => {
-    e.preventDefault();
-    const label = modalNewModel.trim();
-    if (!label) return;
-    const id = label.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-    const next = accounts.map((acc) => {
-      if (acc.id !== accountId) return acc;
-      if (acc.models.some((m) => m.id === id)) return acc;
-      return {
-        ...acc,
-        last_updated: Date.now(),
-        models: [
-          ...acc.models,
-          { id, display_name: label, percentage: 100, reset_time: null },
-        ],
-      };
-    });
-    persist(next);
-    setModalNewModel("");
-  };
-
-  const handleDeleteModel = (accountId: string, modelId: string) => {
-    const next = accounts.map((acc) => {
-      if (acc.id !== accountId) return acc;
-      return {
-        ...acc,
-        models: acc.models.filter((m) => m.id !== modelId),
-      };
-    });
-    persist(next);
-  };
-
-  const handleDeleteAccount = (accountId: string) => {
-    if (checkingAccountId === accountId) {
-      setCheckingAccountId(null);
-    }
-    const remaining = accounts.filter((a) => a.id !== accountId);
-    if (remaining.length > 0 && !remaining.some((a) => a.is_active)) {
-      remaining[0] = { ...remaining[0], is_active: true };
-    }
-    persist(remaining);
-  };
-
-  const handleCopyUsageCmd = async () => {
     try {
-      await navigator.clipboard.writeText("/usage");
-      onNotify?.("Copied /usage (paste in Antigravity CLI/IDE to check live)");
-    } catch {}
+      const next = await invoke<ManagedAccount[]>("save_managed_account", {
+        account: newAcc,
+      });
+      setAccounts(next);
+      setShowAddForm(false);
+      setEmailInput("");
+      setCustomModel("");
+      setPercentInput(0);
+      onNotify?.(`Added account ${cleanEmail}`);
+    } catch (err) {
+      onNotify?.(`Error saving account: ${err}`);
+    }
   };
 
-  const modalAccount =
-    checkingAccountId ? accounts.find((a) => a.id === checkingAccountId) || null : null;
+  const modalAccount = accounts.find((a) => a.id === checkingAccountId);
 
   return (
     <>
-      <div className="mx-2.5 mb-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.05] border border-white/[0.08] shadow-sm transition-colors overflow-hidden shrink-0">
-        {/* Header Bar */}
-        <div
-          onClick={toggleCollapse}
-          className="px-2.5 py-1.5 flex items-center justify-between cursor-pointer select-none border-b border-white/[0.04]"
-        >
+      <div className="rounded-xl border border-white/10 bg-black/40 backdrop-blur-md overflow-hidden transition-all">
+        {/* Header */}
+        <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-white/10 bg-white/[0.02]">
           <div className="flex items-center space-x-1.5 min-w-0">
-            <Cpu className="w-3 h-3 text-cyan-400 shrink-0" />
-            <span className="text-[10px] font-semibold tracking-wider uppercase text-white/75 truncate">
+            <Cpu className="w-3.5 h-3.5 text-cyan-300 shrink-0" />
+            <span className="text-[11px] font-semibold text-white/90 truncate">
               Accounts & Quotas
             </span>
-            {accounts.length > 0 && (
-              <span className="text-[8.5px] font-mono px-1.5 py-0.2 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/25">
-                {accounts.length}
-              </span>
-            )}
+            <span className="text-[9px] font-mono font-medium px-1.5 py-0.2 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-400/20">
+              {accounts.length}
+            </span>
           </div>
 
-          <div
-            className="flex items-center space-x-0.5 shrink-0"
-            onClick={(e) => e.stopPropagation()}
-          >
+          <div className="flex items-center space-x-0.5">
+            {/* Sync All Button */}
+            <button
+              type="button"
+              onClick={handleSyncAll}
+              disabled={isSyncingAll}
+              title="Sync quotas for all accounts"
+              className="p-1 rounded hover:bg-white/15 text-white/50 hover:text-white disabled:opacity-40 transition-colors"
+            >
+              <RefreshCw
+                className={`w-3 h-3 ${isSyncingAll ? "animate-spin text-cyan-300" : ""}`}
+              />
+            </button>
+
+            {/* Import Active Antigravity */}
+            <button
+              type="button"
+              onClick={handleImportAntigravity}
+              title="Import active account from Antigravity"
+              className="p-1 rounded hover:bg-white/15 text-white/50 hover:text-white transition-colors"
+            >
+              <Sparkles className="w-3 h-3 text-amber-300" />
+            </button>
+
+            {/* Google OAuth Button */}
             <button
               type="button"
               onClick={handleGoogleSignIn}
               disabled={isSigningIn}
-              title="Sign in with Google Account"
-              className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-[9px] font-medium text-white/85 flex items-center space-x-1 transition-colors disabled:opacity-50"
+              title={
+                oauthStatus?.has_client_id
+                  ? "Connect Google Account via OAuth"
+                  : "Configure Google OAuth Client"
+              }
+              className="px-1.5 py-0.5 rounded bg-blue-500/20 hover:bg-blue-500/35 border border-blue-400/30 text-[9px] font-semibold text-blue-200 flex items-center space-x-1 transition-colors disabled:opacity-50"
             >
               {isSigningIn ? (
                 <Loader2 className="w-2.5 h-2.5 animate-spin text-cyan-300" />
@@ -521,6 +421,8 @@ export default function AccountQuotaWidget({ onNotify }: AccountQuotaWidgetProps
               )}
               <span>Google</span>
             </button>
+
+            {/* OAuth Client Key Settings */}
             <button
               type="button"
               onClick={() => {
@@ -529,12 +431,16 @@ export default function AccountQuotaWidget({ onNotify }: AccountQuotaWidgetProps
                 if (isCollapsed) toggleCollapse();
               }}
               title="Google OAuth Client Settings"
-              className={`p-0.5 rounded hover:bg-white/15 transition-colors ${
-                oauthStatus?.has_client_id ? "text-emerald-400/80" : "text-white/45 hover:text-white"
+              className={`p-1 rounded hover:bg-white/15 transition-colors ${
+                oauthStatus?.has_client_id
+                  ? "text-emerald-400/80"
+                  : "text-white/45 hover:text-white"
               }`}
             >
               <KeyRound className="w-3 h-3" />
             </button>
+
+            {/* Manual Add Button */}
             <button
               type="button"
               onClick={() => {
@@ -542,16 +448,18 @@ export default function AccountQuotaWidget({ onNotify }: AccountQuotaWidgetProps
                 setShowOAuthSetup(false);
                 if (isCollapsed) toggleCollapse();
               }}
-              title="Add Account / Model Cooldown Manually"
-              className="p-0.5 rounded hover:bg-white/15 text-white/50 hover:text-white transition-colors"
+              title="Add Account Manually"
+              className="p-1 rounded hover:bg-white/15 text-white/50 hover:text-white transition-colors"
             >
               <Plus className="w-3 h-3" />
             </button>
+
+            {/* Collapse / Expand */}
             <button
               type="button"
               onClick={toggleCollapse}
               title={isCollapsed ? "Expand Accounts" : "Collapse Accounts"}
-              className="p-0.5 rounded hover:bg-white/15 text-white/50 hover:text-white transition-colors"
+              className="p-1 rounded hover:bg-white/15 text-white/50 hover:text-white transition-colors"
             >
               {isCollapsed ? (
                 <ChevronRight className="w-3 h-3" />
@@ -564,10 +472,8 @@ export default function AccountQuotaWidget({ onNotify }: AccountQuotaWidgetProps
 
         {/* Collapsible Body */}
         {!isCollapsed && (
-          <div className="p-1.5 space-y-1.5 max-h-[340px] overflow-y-auto">
-            {/* Real quota for the account signed into the official agy CLI */}
-            <LiveAgyUsage onNotify={onNotify} />
-            {/* Google OAuth Desktop Client Setup */}
+          <div className="p-1.5 space-y-2 max-h-[380px] overflow-y-auto">
+            {/* Google OAuth Setup Form */}
             {showOAuthSetup && (
               <form
                 onSubmit={handleSaveOAuthCredentials}
@@ -631,15 +537,15 @@ export default function AccountQuotaWidget({ onNotify }: AccountQuotaWidgetProps
               </form>
             )}
 
-            {/* Manual Add Cooldown Form */}
+            {/* Manual Account Add Form */}
             {showAddForm && (
               <form
-                onSubmit={handleSaveTracker}
+                onSubmit={handleSaveManualAccount}
                 className="p-2 rounded-lg bg-black/40 border border-cyan-500/25 space-y-1.5"
               >
                 <div className="flex items-center justify-between">
                   <span className="text-[9.5px] font-semibold text-cyan-300">
-                    Track Account & Token Reset
+                    Add Account / Cooldown Tracker
                   </span>
                   <button
                     type="button"
@@ -696,24 +602,6 @@ export default function AccountQuotaWidget({ onNotify }: AccountQuotaWidgetProps
                   />
                 )}
 
-                <div className="flex items-center space-x-1">
-                  <span className="text-[8.5px] text-white/40 mr-0.5">Preset:</span>
-                  {[
-                    { label: "5h", hrs: 5 },
-                    { label: "2d", hrs: 48 },
-                    { label: "7d", hrs: 168 },
-                  ].map((preset) => (
-                    <button
-                      key={preset.label}
-                      type="button"
-                      onClick={() => applyCooldownPreset(preset.hrs)}
-                      className="px-1.5 py-0.5 rounded bg-white/[0.06] hover:bg-white/[0.14] text-[9px] font-mono text-cyan-300 border border-white/10 transition-colors"
-                    >
-                      {preset.label}
-                    </button>
-                  ))}
-                </div>
-
                 <div className="grid grid-cols-3 gap-1 items-center">
                   <div>
                     <label className="text-[8.5px] text-white/40 block">Left %</label>
@@ -754,189 +642,254 @@ export default function AccountQuotaWidget({ onNotify }: AccountQuotaWidgetProps
                   type="submit"
                   className="w-full py-1 rounded bg-cyan-600/80 hover:bg-cyan-500 text-[10px] font-semibold text-white transition-colors"
                 >
-                  Save Cooldown Timer
+                  Save Account
                 </button>
               </form>
             )}
 
-            {/* Account Cards */}
-            {accounts.map((acc) => (
-              <div
-                key={acc.id}
-                className={`p-2 rounded-lg border transition-colors ${
-                  acc.is_active
-                    ? "bg-black/35 border-cyan-400/30"
-                    : "bg-black/25 border-white/[0.06] hover:border-white/[0.12]"
-                }`}
-              >
-                {/* Account Header */}
-                <div className="flex items-center justify-between mb-1.5">
-                  <button
-                    type="button"
-                    onClick={() => handleSetActive(acc.id)}
-                    title={acc.is_active ? "Active account" : "Click to set active"}
-                    className="flex items-center space-x-1.5 min-w-0 text-left flex-1"
-                  >
-                    {acc.avatar_url ? (
-                      <img
-                        src={acc.avatar_url}
-                        alt={acc.email}
-                        className={`w-4 h-4 rounded-full shrink-0 ring-1 ${
-                          acc.is_active ? "ring-emerald-400" : "ring-white/20"
-                        }`}
-                      />
-                    ) : (
+            {/* ALL ACCOUNTS SHOWN SIMULTANEOUSLY */}
+            {accounts.map((acc) => {
+              const isSyncing = syncingIds.has(acc.id);
+              const hasReportGroups = acc.report?.groups && acc.report.groups.length > 0;
+              const hasManualModels = acc.manual_models && acc.manual_models.length > 0;
+
+              return (
+                <div
+                  key={acc.id}
+                  className={`p-2 rounded-lg border transition-all ${
+                    acc.is_active
+                      ? "bg-black/45 border-cyan-400/40 shadow-sm shadow-cyan-500/10"
+                      : "bg-black/30 border-white/[0.08] hover:border-white/[0.16]"
+                  }`}
+                >
+                  {/* Account Header */}
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div className="flex items-center space-x-1.5 min-w-0 flex-1">
+                      {acc.avatar_url ? (
+                        <img
+                          src={acc.avatar_url}
+                          alt={acc.email}
+                          className={`w-4 h-4 rounded-full shrink-0 ring-1 ${
+                            acc.is_active ? "ring-emerald-400" : "ring-white/20"
+                          }`}
+                        />
+                      ) : (
+                        <span
+                          className={`w-2 h-2 rounded-full shrink-0 ${
+                            acc.is_active
+                              ? "bg-emerald-400 shadow-sm shadow-emerald-400/50"
+                              : "bg-white/25"
+                          }`}
+                        />
+                      )}
                       <span
-                        className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                          acc.is_active
-                            ? "bg-emerald-400 shadow-sm shadow-emerald-400/50"
-                            : "bg-white/25 hover:bg-white/50"
-                        }`}
-                      />
-                    )}
-                    <span
-                      className="text-[10.5px] font-medium text-white/90 truncate"
-                      title={acc.name ? `${acc.name} (${acc.email})` : acc.email}
-                    >
-                      {acc.email}
-                    </span>
-                  </button>
+                        className="text-[10px] font-semibold text-white/90 truncate"
+                        title={acc.name ? `${acc.name} (${acc.email})` : acc.email}
+                      >
+                        {acc.email}
+                      </span>
+                    </div>
 
-                  <div className="flex items-center space-x-1 shrink-0 ml-1">
-                    <span
-                      className={`text-[8px] font-bold px-1.5 py-0.2 rounded border uppercase ${getTierBadgeStyle(
-                        acc.subscription_tier
-                      )}`}
-                    >
-                      {acc.subscription_tier}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setCheckingAccountId(acc.id)}
-                      title="Open Account Check Modal"
-                      className="px-1.5 py-0.5 rounded bg-cyan-500/15 hover:bg-cyan-500/30 text-[8.5px] font-medium text-cyan-200 border border-cyan-400/25 flex items-center space-x-0.5 transition-colors"
-                    >
-                      <SlidersHorizontal className="w-2.5 h-2.5" />
-                      <span>Check</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteAccount(acc.id)}
-                      title="Remove account"
-                      className="text-white/30 hover:text-rose-400 transition-colors"
-                    >
-                      <Trash2 className="w-2.5 h-2.5" />
-                    </button>
+                    <div className="flex items-center space-x-1 shrink-0 ml-1">
+                      {acc.is_active ? (
+                        <span className="text-[7.5px] font-bold px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/35 uppercase tracking-wider">
+                          ACTIVE
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleSwitchActive(acc.id)}
+                          title="Switch Antigravity to use this account"
+                          className="px-1.5 py-0.2 rounded bg-white/10 hover:bg-emerald-500/25 text-[7.5px] font-semibold text-white/70 hover:text-emerald-300 border border-white/15 transition-colors"
+                        >
+                          Set Active
+                        </button>
+                      )}
+
+                      <span
+                        className={`text-[7.5px] font-bold px-1.5 py-0.2 rounded border uppercase ${getTierBadgeStyle(
+                          acc.subscription_tier
+                        )}`}
+                      >
+                        {acc.subscription_tier}
+                      </span>
+
+                      <button
+                        type="button"
+                        onClick={() => handleRefreshSingle(acc.id)}
+                        disabled={isSyncing}
+                        title="Sync live quota"
+                        className="p-0.5 rounded hover:bg-white/15 text-white/50 hover:text-white transition-colors disabled:opacity-40"
+                      >
+                        <RefreshCw
+                          className={`w-2.5 h-2.5 ${isSyncing ? "animate-spin text-cyan-300" : ""}`}
+                        />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setCheckingAccountId(acc.id)}
+                        title="Open account details modal"
+                        className="p-0.5 rounded hover:bg-white/15 text-white/50 hover:text-white transition-colors"
+                      >
+                        <SlidersHorizontal className="w-2.5 h-2.5" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteAccount(acc.id)}
+                        title="Remove account"
+                        className="p-0.5 rounded hover:bg-rose-500/20 text-white/35 hover:text-rose-400 transition-colors"
+                      >
+                        <Trash2 className="w-2.5 h-2.5" />
+                      </button>
+                    </div>
                   </div>
-                </div>
 
-                {/* Compact Model Bars */}
-                <div className="space-y-1">
-                  {acc.models.map((model) => {
-                    const pct = Math.round(model.percentage);
-                    const reset = formatResetCountdown(model.reset_time, pct, nowMs);
-
-                    return (
-                      <div key={model.id} className="group/row space-y-0.5">
-                        <div className="flex items-center justify-between text-[9.5px]">
-                          <span
-                            className="text-white/75 truncate max-w-[95px]"
-                            title={model.display_name}
-                          >
-                            {model.display_name}
-                          </span>
-
-                          <div className="flex items-center space-x-1 shrink-0 font-mono">
-                            <div className="opacity-0 group-hover/row:opacity-100 flex items-center space-x-0.5 transition-opacity">
-                              <button
-                                type="button"
-                                onClick={() => handleSetCooldownHours(acc.id, model.id, 5)}
-                                title="Log 5h cooldown (0%)"
-                                className="px-1 rounded bg-white/10 hover:bg-rose-500/30 text-[8px] text-white/70 hover:text-rose-200"
-                              >
-                                5h
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleQuickReset(acc.id, model.id)}
-                                title="Mark Full (100%)"
-                                className="p-0.5 rounded bg-white/10 hover:bg-emerald-500/30 text-white/70 hover:text-emerald-200"
-                              >
-                                <RotateCcw className="w-2 h-2" />
-                              </button>
-                            </div>
-
-                            <span
-                              className={`flex items-center space-x-0.5 text-[8.5px] ${
-                                reset.isReady
-                                  ? "text-emerald-400/85"
-                                  : reset.isUrgent
-                                  ? "text-rose-300 font-semibold"
-                                  : "text-white/55"
-                              }`}
-                              title={reset.exactTime ? `Resets at ${reset.exactTime}` : undefined}
-                            >
-                              {reset.isReady ? (
-                                <CheckCircle2 className="w-2.5 h-2.5 opacity-80" />
-                              ) : (
-                                <Clock className="w-2.5 h-2.5 opacity-70" />
-                              )}
-                              <span>
-                                {reset.text}
-                                {reset.exactTime && !reset.isReady
-                                  ? ` · ${reset.exactTime}`
-                                  : ""}
-                              </span>
-                            </span>
-
-                            <span
-                              className={`font-semibold w-[26px] text-right ${getTextColor(
-                                pct
-                              )}`}
-                            >
-                              {pct}%
-                            </span>
+                  {/* Quota Data Render: Live Groups (Gemini, Claude, GPT) */}
+                  {hasReportGroups && (
+                    <div className="space-y-1.5 pt-0.5">
+                      {acc.report!.groups.map((g) => (
+                        <div key={g.name} className="space-y-1">
+                          <div className="text-[9px] font-medium text-white/60 truncate">
+                            {g.name}
                           </div>
-                        </div>
+                          {g.buckets.map((b) => {
+                            const pct = Math.round(b.remaining_percent);
+                            const cd = formatResetCountdown(b.reset_time, pct, nowMs);
 
-                        <div className="w-full h-1 bg-white/10 rounded-full overflow-hidden">
-                          <div
-                            className={`h-full rounded-full transition-all duration-500 ${getBarColor(
-                              pct
-                            )}`}
-                            style={{ width: `${Math.max(2, pct)}%` }}
-                          />
+                            return (
+                              <div key={b.id || b.name} className="space-y-0.5">
+                                <div className="flex items-center justify-between text-[8.5px]">
+                                  <span className="text-white/50 truncate max-w-[100px]">
+                                    {windowLabel(b.window, b.name)}
+                                  </span>
+                                  <div className="flex items-center space-x-1.5 font-mono">
+                                    <span
+                                      className={`flex items-center space-x-0.5 ${
+                                        cd.isReady
+                                          ? "text-emerald-400/80"
+                                          : cd.isUrgent
+                                          ? "text-rose-300 font-semibold"
+                                          : "text-white/50"
+                                      }`}
+                                      title={cd.exactTime ? `Resets at ${cd.exactTime}` : undefined}
+                                    >
+                                      {cd.isReady ? (
+                                        <CheckCircle2 className="w-2 h-2 opacity-80" />
+                                      ) : (
+                                        <Clock className="w-2 h-2 opacity-70" />
+                                      )}
+                                      <span>
+                                        {cd.text}
+                                        {cd.exactTime && !cd.isReady ? ` · ${cd.exactTime}` : ""}
+                                      </span>
+                                    </span>
+                                    <span
+                                      className={`font-semibold w-[26px] text-right ${getTextColor(
+                                        pct
+                                      )}`}
+                                    >
+                                      {pct}%
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="w-full h-1 bg-white/10 rounded-full overflow-hidden">
+                                  <div
+                                    className={`h-full rounded-full transition-all duration-500 ${getBarColor(
+                                      pct
+                                    )}`}
+                                    style={{ width: `${Math.max(2, pct)}%` }}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
-                      </div>
-                    );
-                  })}
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Manual Models Fallback */}
+                  {!hasReportGroups && hasManualModels && (
+                    <div className="space-y-1 pt-0.5">
+                      {acc.manual_models.map((m) => {
+                        const pct = Math.round(m.percentage);
+                        const cd = formatResetCountdown(m.reset_time, pct, nowMs);
+                        return (
+                          <div key={m.id} className="space-y-0.5">
+                            <div className="flex items-center justify-between text-[8.5px]">
+                              <span className="text-white/60 truncate max-w-[100px]">
+                                {m.display_name}
+                              </span>
+                              <div className="flex items-center space-x-1.5 font-mono">
+                                <span className="text-white/50 text-[8px] flex items-center space-x-0.5">
+                                  <Clock className="w-2 h-2 opacity-70" />
+                                  <span>{cd.text}</span>
+                                </span>
+                                <span
+                                  className={`font-semibold w-[26px] text-right ${getTextColor(
+                                    pct
+                                  )}`}
+                                >
+                                  {pct}%
+                                </span>
+                              </div>
+                            </div>
+                            <div className="w-full h-1 bg-white/10 rounded-full overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all duration-500 ${getBarColor(
+                                  pct
+                                )}`}
+                                style={{ width: `${Math.max(2, pct)}%` }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Empty state for this specific account */}
+                  {!hasReportGroups && !hasManualModels && (
+                    <div className="py-1 px-1.5 rounded bg-white/[0.03] text-[8.5px] text-white/40 flex items-center justify-between">
+                      <span>No quota data loaded yet</span>
+                      <button
+                        type="button"
+                        onClick={() => handleRefreshSingle(acc.id)}
+                        className="text-cyan-300 hover:underline"
+                      >
+                        Sync Now
+                      </button>
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
 
-            {/* Empty State */}
+            {/* Global Empty State */}
             {accounts.length === 0 && !showAddForm && !showOAuthSetup && (
-              <div className="p-2 rounded-lg bg-black/25 border border-white/[0.06] text-center space-y-1.5">
-                <p className="text-[9.5px] text-white/50 leading-snug">
-                  Other accounts: sign in with Google or add one manually to log cooldowns.
+              <div className="p-3 rounded-lg bg-black/25 border border-white/[0.06] text-center space-y-2">
+                <p className="text-[10px] text-white/60 leading-snug">
+                  No accounts linked yet. Import from Antigravity or sign in with Google to see real-time model quotas.
                 </p>
                 <div className="flex items-center justify-center space-x-1.5">
                   <button
                     type="button"
-                    onClick={handleGoogleSignIn}
-                    disabled={isSigningIn}
-                    className="px-2 py-1 rounded-md bg-blue-500/20 hover:bg-blue-500/30 border border-blue-400/30 text-[9.5px] font-medium text-blue-200 flex items-center space-x-1 transition-colors"
+                    onClick={handleImportAntigravity}
+                    className="px-2 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/30 text-[9.5px] font-medium text-amber-200 flex items-center space-x-1 transition-colors"
                   >
-                    <LogIn className="w-2.5 h-2.5" />
-                    <span>Google Login</span>
+                    <Sparkles className="w-2.5 h-2.5" />
+                    <span>Import Antigravity</span>
                   </button>
                   <button
                     type="button"
-                    onClick={() => setShowAddForm(true)}
-                    className="px-2 py-1 rounded-md bg-white/10 hover:bg-white/15 border border-white/10 text-[9.5px] font-medium text-white/80 flex items-center space-x-1 transition-colors"
+                    onClick={handleGoogleSignIn}
+                    disabled={isSigningIn}
+                    className="px-2 py-1 rounded bg-blue-500/20 hover:bg-blue-500/30 border border-blue-400/30 text-[9.5px] font-medium text-blue-200 flex items-center space-x-1 transition-colors"
                   >
-                    <Plus className="w-2.5 h-2.5" />
-                    <span>Manual</span>
+                    <LogIn className="w-2.5 h-2.5" />
+                    <span>Google Login</span>
                   </button>
                 </div>
               </div>
@@ -945,11 +898,11 @@ export default function AccountQuotaWidget({ onNotify }: AccountQuotaWidgetProps
         )}
       </div>
 
-      {/* Account Check & Quota Modal */}
+      {/* Account Details & Diagnostic Modal */}
       {modalAccount && (
-        <div className="fixed inset-0 bg-black/65 z-50 flex items-center justify-center p-2.5">
-          <div className="w-full max-h-[90vh] macos-menu-glass rounded-2xl border border-white/20 p-3 flex flex-col space-y-2.5 shadow-2xl overflow-hidden">
-            {/* Modal Header */}
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-3">
+          <div className="w-full max-h-[85vh] macos-menu-glass rounded-2xl border border-white/20 p-3.5 flex flex-col space-y-2.5 shadow-2xl overflow-hidden">
+            {/* Header */}
             <div className="flex items-center justify-between border-b border-white/10 pb-2 shrink-0">
               <div className="flex items-center space-x-2 min-w-0">
                 {modalAccount.avatar_url ? (
@@ -982,143 +935,89 @@ export default function AccountQuotaWidget({ onNotify }: AccountQuotaWidgetProps
               </button>
             </div>
 
-            {/* Tier & Active Controls */}
+            {/* Actions Bar */}
             <div className="flex items-center justify-between gap-1.5 shrink-0">
               <div className="flex items-center space-x-1">
-                {(["PRO", "ULTRA", "FREE"] as const).map((tier) => (
+                {modalAccount.is_active ? (
+                  <span className="text-[8.5px] font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 uppercase">
+                    Active Antigravity Account
+                  </span>
+                ) : (
                   <button
-                    key={tier}
                     type="button"
-                    onClick={() => handleUpdateAccountTier(modalAccount.id, tier)}
-                    className={`px-2 py-0.5 rounded text-[9px] font-bold border transition-colors ${
-                      modalAccount.subscription_tier === tier
-                        ? getTierBadgeStyle(tier)
-                        : "bg-white/5 border-white/10 text-white/40 hover:text-white/80"
-                    }`}
+                    onClick={() => handleSwitchActive(modalAccount.id)}
+                    className="px-2 py-0.5 rounded bg-emerald-600/70 hover:bg-emerald-500 text-[8.5px] font-semibold text-white transition-colors"
                   >
-                    {tier}
+                    Set as Active
                   </button>
-                ))}
+                )}
               </div>
 
               <button
                 type="button"
-                onClick={handleCopyUsageCmd}
-                title="Copy /usage command for Antigravity CLI"
-                className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/15 border border-white/10 text-[9.5px] text-white/80 flex items-center space-x-1"
+                onClick={() => handleRefreshSingle(modalAccount.id)}
+                className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/15 border border-white/10 text-[9px] text-white/80 flex items-center space-x-1"
               >
-                <Copy className="w-2.5 h-2.5 text-cyan-300" />
-                <span>Copy /usage</span>
+                <RefreshCw className="w-2.5 h-2.5 text-cyan-300" />
+                <span>Refresh Quotas</span>
               </button>
             </div>
 
-            {/* Model Sliders & Cooldown Buttons */}
+            {/* Content Scroll */}
             <div className="flex-1 overflow-y-auto space-y-2 pr-0.5">
-              {modalAccount.models.map((model) => {
-                const pct = Math.round(model.percentage);
-                const reset = formatResetCountdown(model.reset_time, pct, nowMs);
-
-                return (
-                  <div
-                    key={model.id}
-                    className="p-2 rounded-xl bg-black/30 border border-white/[0.08] space-y-1.5"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-medium text-white/90 truncate">
-                        {model.display_name}
-                      </span>
-                      <div className="flex items-center space-x-1.5 shrink-0">
-                        <span className={`text-[10.5px] font-mono font-bold ${getTextColor(pct)}`}>
-                          {pct}%
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteModel(modalAccount.id, model.id)}
-                          title="Remove model"
-                          className="text-white/30 hover:text-rose-400"
-                        >
-                          <Trash2 className="w-2.5 h-2.5" />
-                        </button>
+              {modalAccount.report?.groups && modalAccount.report.groups.length > 0 ? (
+                <div className="space-y-2">
+                  {modalAccount.report.groups.map((g) => (
+                    <div
+                      key={g.name}
+                      className="p-2.5 rounded-xl bg-black/35 border border-white/[0.08] space-y-1.5"
+                    >
+                      <div className="text-[11px] font-semibold text-white/90">
+                        {g.name}
+                      </div>
+                      {g.description && (
+                        <div className="text-[8.5px] text-white/40 leading-snug">
+                          {g.description}
+                        </div>
+                      )}
+                      <div className="space-y-1.5 pt-1">
+                        {g.buckets.map((b) => {
+                          const pct = Math.round(b.remaining_percent);
+                          const cd = formatResetCountdown(b.reset_time, pct, nowMs);
+                          return (
+                            <div key={b.id || b.name} className="space-y-1">
+                              <div className="flex items-center justify-between text-[9.5px]">
+                                <span className="text-white/70 font-medium">
+                                  {b.name || windowLabel(b.window, "")} ({b.window})
+                                </span>
+                                <div className="flex items-center space-x-1.5 font-mono">
+                                  <span className="text-white/50 text-[9px]">
+                                    {cd.text} {cd.exactTime ? `· ${cd.exactTime}` : ""}
+                                  </span>
+                                  <span className={`font-bold ${getTextColor(pct)}`}>
+                                    {pct}%
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
+                                <div
+                                  className={`h-full rounded-full ${getBarColor(pct)}`}
+                                  style={{ width: `${Math.max(2, pct)}%` }}
+                                />
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
-
-                    <input
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={pct}
-                      onChange={(e) =>
-                        handleUpdateModel(modalAccount.id, model.id, {
-                          percentage: Number(e.target.value),
-                        })
-                      }
-                      className="w-full accent-cyan-400 cursor-pointer h-1.5"
-                    />
-
-                    <div className="flex items-center justify-between text-[9px]">
-                      <span className="font-mono text-white/55 flex items-center space-x-1">
-                        <Clock className="w-2.5 h-2.5" />
-                        <span>
-                          {reset.text}
-                          {reset.exactTime && !reset.isReady ? ` (${reset.exactTime})` : ""}
-                        </span>
-                      </span>
-
-                      <div className="flex items-center space-x-1">
-                        {[
-                          { label: "5h", hrs: 5 },
-                          { label: "2d", hrs: 48 },
-                          { label: "7d", hrs: 168 },
-                        ].map((p) => (
-                          <button
-                            key={p.label}
-                            type="button"
-                            onClick={() =>
-                              handleSetCooldownHours(modalAccount.id, model.id, p.hrs)
-                            }
-                            className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-rose-500/30 font-mono text-[8.5px] text-white/80"
-                          >
-                            {p.label}
-                          </button>
-                        ))}
-                        <button
-                          type="button"
-                          onClick={() => handleQuickReset(modalAccount.id, model.id)}
-                          className="px-1.5 py-0.5 rounded bg-emerald-500/20 hover:bg-emerald-500/35 font-mono text-[8.5px] text-emerald-300"
-                        >
-                          100%
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-
-              {/* Add Model Row */}
-              <form
-                onSubmit={(e) => handleAddModelInModal(modalAccount.id, e)}
-                className="flex items-center space-x-1.5 pt-0.5"
-              >
-                <input
-                  type="text"
-                  placeholder="Add model (e.g. Gemini 4)..."
-                  value={modalNewModel}
-                  onChange={(e) => setModalNewModel(e.target.value)}
-                  className="flex-1 bg-black/30 border border-white/10 rounded-lg px-2 py-1 text-[10px] text-white placeholder-white/30 outline-none focus:border-cyan-400/50"
-                />
-                <button
-                  type="submit"
-                  className="px-2 py-1 rounded-lg bg-cyan-600/75 hover:bg-cyan-500 text-[10px] font-medium text-white"
-                >
-                  Add
-                </button>
-              </form>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-3 text-center text-[10px] text-white/50 bg-black/20 rounded-xl">
+                  No live quota groups recorded. Click "Refresh Quotas" above.
+                </div>
+              )}
             </div>
-
-            <p className="text-[8.5px] text-white/40 leading-snug shrink-0">
-              Google Login verifies your Google profile cleanly via PKCE. Use{" "}
-              <code className="text-white/60">/usage</code> inside Antigravity CLI/IDE to check live server limits and slide percentages or tap 5h/2d/7d above.
-            </p>
           </div>
         </div>
       )}

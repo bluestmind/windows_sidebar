@@ -265,7 +265,7 @@ pub fn perform_google_oauth_login(app: &tauri::AppHandle) -> Result<GoogleUserPr
     let code_challenge = URL_SAFE_NO_PAD.encode(hasher.finalize());
 
     let auth_url = format!(
-        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&code_challenge={}&code_challenge_method=S256&state={}&prompt=select_account",
+        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&code_challenge={}&code_challenge_method=S256&state={}&prompt=select_account%20consent&access_type=offline",
         url_encode(client_id),
         url_encode(&redirect_uri),
         url_encode("openid email profile"),
@@ -363,6 +363,11 @@ pub fn perform_google_oauth_login(app: &tauri::AppHandle) -> Result<GoogleUserPr
         .and_then(|v| v.as_str())
         .ok_or_else(|| "Google token response missing access_token".to_string())?;
 
+    let refresh_token = token_json
+        .get("refresh_token")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
     let user_json = run_curl_get_bearer("https://www.googleapis.com/oauth2/v3/userinfo", access_token)?;
     let email = user_json
         .get("email")
@@ -384,6 +389,36 @@ pub fn perform_google_oauth_login(app: &tauri::AppHandle) -> Result<GoogleUserPr
         .get("picture")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+
+    // Register with managed accounts system
+    let raw_cred = serde_json::json!({
+        "token": {
+            "access_token": access_token,
+            "token_type": "Bearer",
+            "refresh_token": refresh_token,
+            "expiry": "",
+        },
+        "auth_method": "consumer",
+        "id_token_email": email,
+        "writer_id": "",
+    });
+
+    let mut new_account = crate::antigravity_accounts::ManagedAccount {
+        id: format!("google-{}", email.replace('@', "-").replace('.', "-")),
+        email: email.clone(),
+        name: name.clone(),
+        avatar_url: avatar_url.clone(),
+        subscription_tier: "PRO".to_string(),
+        is_active: false,
+        access_token: Some(access_token.to_string()),
+        refresh_token,
+        raw_cred_json: Some(raw_cred.to_string()),
+        report: None,
+        manual_models: Vec::new(),
+        last_synced_ms: 0,
+    };
+    crate::antigravity_accounts::sync_account_quota(&mut new_account);
+    let _ = crate::antigravity_accounts::add_or_update_account(new_account);
 
     Ok(GoogleUserProfile {
         id: sub,

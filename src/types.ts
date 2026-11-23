@@ -73,6 +73,21 @@ export interface ModelQuotaInfo {
   reset_time: string | null;
 }
 
+export interface ManagedAccount {
+  id: string;
+  email: string;
+  name?: string | null;
+  avatar_url?: string | null;
+  subscription_tier: 'PRO' | 'ULTRA' | 'FREE';
+  is_active: boolean;
+  access_token?: string | null;
+  refresh_token?: string | null;
+  raw_cred_json?: string | null;
+  report?: AgyUsageReport | null;
+  manual_models: ModelQuotaInfo[];
+  last_synced_ms: number;
+}
+
 export interface GoogleAccountQuota {
   id: string;
   email: string;

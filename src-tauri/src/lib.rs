@@ -1,10 +1,12 @@
 mod agy_usage;
+mod antigravity_accounts;
 mod appbar;
 mod config;
 mod google_oauth;
 mod shell_utils;
 
 use agy_usage::AgyUsageReport;
+use antigravity_accounts::ManagedAccount;
 use config::{AppConfig, AppItem};
 use google_oauth::{GoogleUserProfile, OAuthConfigStatus};
 use tauri::Manager;
@@ -192,6 +194,55 @@ async fn get_agy_usage() -> Result<AgyUsageReport, String> {
 }
 
 #[tauri::command]
+async fn get_managed_accounts() -> Result<Vec<ManagedAccount>, String> {
+    tauri::async_runtime::spawn_blocking(antigravity_accounts::get_or_sync_managed_accounts)
+        .await
+        .map_err(|e| format!("Task join error: {}", e))
+}
+
+#[tauri::command]
+async fn refresh_account_quota(account_id: String) -> Result<ManagedAccount, String> {
+    tauri::async_runtime::spawn_blocking(move || antigravity_accounts::refresh_single_account(&account_id))
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
+}
+
+#[tauri::command]
+async fn refresh_all_accounts_quota() -> Result<Vec<ManagedAccount>, String> {
+    tauri::async_runtime::spawn_blocking(antigravity_accounts::refresh_all_accounts)
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
+}
+
+#[tauri::command]
+async fn switch_active_account(account_id: String) -> Result<Vec<ManagedAccount>, String> {
+    tauri::async_runtime::spawn_blocking(move || antigravity_accounts::switch_active_account(&account_id))
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
+}
+
+#[tauri::command]
+async fn import_active_antigravity_account() -> Result<ManagedAccount, String> {
+    tauri::async_runtime::spawn_blocking(antigravity_accounts::import_active_antigravity)
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
+}
+
+#[tauri::command]
+async fn save_managed_account(account: ManagedAccount) -> Result<Vec<ManagedAccount>, String> {
+    tauri::async_runtime::spawn_blocking(move || antigravity_accounts::add_or_update_account(account))
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
+}
+
+#[tauri::command]
+async fn delete_managed_account(account_id: String) -> Result<Vec<ManagedAccount>, String> {
+    tauri::async_runtime::spawn_blocking(move || antigravity_accounts::remove_managed_account(&account_id))
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
+}
+
+#[tauri::command]
 fn close_sidebar(app: tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         if let Ok(hwnd) = window.hwnd() {
@@ -222,7 +273,14 @@ pub fn run() {
             get_google_oauth_config,
             save_google_oauth_config,
             google_oauth_login,
-            get_agy_usage
+            get_agy_usage,
+            get_managed_accounts,
+            refresh_account_quota,
+            refresh_all_accounts_quota,
+            switch_active_account,
+            import_active_antigravity_account,
+            save_managed_account,
+            delete_managed_account
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
