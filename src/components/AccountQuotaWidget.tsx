@@ -257,13 +257,6 @@ export default function AccountQuotaWidget({ onNotify }: AccountQuotaWidgetProps
   };
 
   const handleGoogleSignIn = async () => {
-    if (!oauthStatus?.has_client_id) {
-      setShowOAuthSetup(true);
-      setShowAddForm(false);
-      if (isCollapsed) toggleCollapse();
-      return;
-    }
-
     setIsSigningIn(true);
     try {
       const profile = await invoke<GoogleUserProfile>("google_oauth_login");
@@ -852,15 +845,29 @@ export default function AccountQuotaWidget({ onNotify }: AccountQuotaWidgetProps
 
                   {/* Empty state for this specific account */}
                   {!hasReportGroups && !hasManualModels && (
-                    <div className="py-1 px-1.5 rounded bg-white/[0.03] text-[8.5px] text-white/40 flex items-center justify-between">
-                      <span>No quota data loaded yet</span>
-                      <button
-                        type="button"
-                        onClick={() => handleRefreshSingle(acc.id)}
-                        className="text-cyan-300 hover:underline"
-                      >
-                        Sync Now
-                      </button>
+                    <div className="py-1 px-1.5 rounded bg-white/[0.03] text-[8.5px] text-white/50 flex items-center justify-between">
+                      <span title="Click Link via Google to grant Antigravity Code Assist quota scopes">
+                        Needs Code Assist auth
+                      </span>
+                      <div className="flex items-center space-x-2">
+                        <button
+                          type="button"
+                          onClick={() => handleRefreshSingle(acc.id)}
+                          className="text-cyan-300 hover:underline"
+                        >
+                          Sync
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleGoogleSignIn}
+                          disabled={isSigningIn}
+                          className="text-blue-300 hover:text-blue-200 hover:underline font-semibold flex items-center space-x-0.5"
+                          title="Sign in with Google using official Antigravity Code Assist scopes"
+                        >
+                          <LogIn className="w-2.5 h-2.5 text-blue-300" />
+                          <span>Link via Google</span>
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>

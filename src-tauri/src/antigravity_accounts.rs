@@ -335,7 +335,8 @@ pub fn fetch_quota_with_token(access_token: &str) -> Result<AgyUsageReport, Stri
 }
 
 /// Refreshes quota for a given managed account.
-/// If access_token fails or is missing and account is active, falls back to `agy /usage`.
+/// If access_token fails or is missing, attempts token refresh via refresh_token.
+/// If account is active and still fails, falls back to `agy /usage`.
 pub fn sync_account_quota(account: &mut ManagedAccount) {
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -344,6 +345,7 @@ pub fn sync_account_quota(account: &mut ManagedAccount) {
 
     let mut success = false;
 
+    // 1. Try existing access token
     if let Some(token) = account.access_token.as_deref() {
         if let Ok(report) = fetch_quota_with_token(token) {
             account.report = Some(report);
@@ -352,8 +354,34 @@ pub fn sync_account_quota(account: &mut ManagedAccount) {
         }
     }
 
+    // 2. If existing token failed, try to refresh via refresh_token
+    if !success {
+        if let Some(refresh_tok) = account.refresh_token.as_deref() {
+            let form = format!(
+                "client_id={}&client_secret={}&refresh_token={}&grant_type=refresh_token",
+                crate::google_oauth::url_encode(&crate::google_oauth::get_default_client_id()),
+                crate::google_oauth::url_encode(&crate::google_oauth::get_default_client_secret()),
+                crate::google_oauth::url_encode(refresh_tok)
+            );
+
+            if let Ok(token_json) = crate::google_oauth::run_curl_post_form(
+                "https://oauth2.googleapis.com/token",
+                &form,
+            ) {
+                if let Some(new_tok) = token_json.get("access_token").and_then(|v| v.as_str()) {
+                    account.access_token = Some(new_tok.to_string());
+                    if let Ok(report) = fetch_quota_with_token(new_tok) {
+                        account.report = Some(report);
+                        account.last_synced_ms = now_ms;
+                        success = true;
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Fallback to official local agy CLI if active account
     if !success && account.is_active {
-        // Fallback to official local agy CLI
         if let Ok(report) = fetch_agy_usage() {
             account.report = Some(report);
             account.last_synced_ms = now_ms;
